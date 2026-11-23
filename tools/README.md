@@ -36,7 +36,7 @@ The page embeds every edge, so very busy captures produce large files.
 python tools\bits2csv.py captures\cap_1795413148654_8430 -o dclk.csv
 ```
 
-The CSV has a row at the first sample, one at each sample where any channel changes, and one at the last sample. Two `;` comment lines give the sample rate and count. The default output is `<capture folder>\<folder name>.csv`.
+The CSV has a row at the first sample, one at each sample where any channel changes, and one at the last sample. Two `;` comment lines give the sample rate and count. The default output is `<capture folder>\<folder name>.csv`. The script reads the `.bits` files memory-mapped, in batches of 256K samples, so its memory use doesn't grow with the size of the capture.
 
 ## plot.py
 

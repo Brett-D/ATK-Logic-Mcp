@@ -11,7 +11,10 @@ from pathlib import Path
 
 import numpy as np
 
-from capture_files import load_channel, load_meta
+from capture_files import load_meta, map_channel
+
+# Samples per batch. A multiple of 8, so every batch starts on a byte boundary of the packed files.
+CHUNK = 1 << 18
 
 
 def convert(cap: Path, out_csv: Path) -> int:
@@ -19,22 +22,30 @@ def convert(cap: Path, out_csv: Path) -> int:
     fs = float(meta["sample_rate"])
     n = int(meta["actual_samples"])
     chans = [int(c) for c in meta["channels"]]
-    if n == 0:
+    if n == 0 or not chans:
         raise SystemExit(f"{cap}: capture has no samples")
-    # Keep only each channel's initial level and edge positions, so long captures stay small in memory.
-    inits, edges = [], []
-    for c in chans:
-        bits = load_channel(cap, c, n)
-        inits.append(int(bits[0]))
-        edges.append(np.flatnonzero(bits[1:] != bits[:-1]) + 1)
-    rows = np.unique(np.concatenate([[0, n - 1], *edges]))
-    # The level at sample i is the initial level flipped once per edge at or before i.
-    levels = [(init + np.searchsorted(e, rows, side="right")) % 2 for init, e in zip(inits, edges)]
+    # Walk memory-mapped files in fixed-size batches, so memory use doesn't grow with the capture.
+    packed = [map_channel(cap, c, n) for c in chans]
+    fmt = ["%.10f"] + ["%d"] * len(chans)
+    prev = None  # levels at the last sample of the previous batch
+    total = 0
     with open(out_csv, "w", newline="\n", encoding="utf-8") as f:
         f.write(f"; Sample rate: {fs / 1e6:g} MHz\n; Sample count: {n}\n")
         f.write("Time(s)," + ",".join(str(c) for c in chans) + "\n")
-        np.savetxt(f, np.column_stack([rows / fs, *levels]), fmt=["%.10f"] + ["%d"] * len(chans), delimiter=",")
-    return len(rows)
+        for start in range(0, n, CHUNK):
+            stop = min(n, start + CHUNK)
+            bits = np.stack([np.unpackbits(p[start // 8:(stop + 7) // 8], bitorder="little")[:stop - start]
+                             for p in packed])
+            rows = np.flatnonzero(np.any(bits[:, 1:] != bits[:, :-1], axis=0)) + 1
+            if prev is None or np.any(bits[:, 0] != prev):
+                rows = np.r_[0, rows]
+            if stop == n and (rows.size == 0 or rows[-1] != stop - start - 1):
+                rows = np.r_[rows, stop - start - 1]
+            if rows.size:
+                np.savetxt(f, np.column_stack([(start + rows) / fs, bits[:, rows].T]), fmt=fmt, delimiter=",")
+            total += rows.size
+            prev = bits[:, -1].copy()
+    return total
 
 
 def main() -> None:

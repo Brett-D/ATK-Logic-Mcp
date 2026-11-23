@@ -1,4 +1,5 @@
 """Tests for the capture scripts in tools/, run against a small synthetic capture folder."""
+import importlib
 import json
 import subprocess
 import sys
@@ -43,6 +44,17 @@ def test_bits2csv_writes_change_only_rows(tmp_path):
         "0.0000080000,1,0",
         "0.0000090000,1,0",
     ]
+
+
+def test_bits2csv_batches_match_single_pass(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(TOOLS))
+    bits2csv = importlib.import_module("bits2csv")
+    cap = _write_capture(tmp_path)
+    whole, batched = tmp_path / "whole.csv", tmp_path / "batched.csv"
+    bits2csv.convert(cap, whole)
+    monkeypatch.setattr(bits2csv, "CHUNK", 8)  # splits the 10 samples across a batch boundary
+    bits2csv.convert(cap, batched)
+    assert batched.read_text(encoding="utf-8") == whole.read_text(encoding="utf-8")
 
 
 def test_view_embeds_edges_labels_and_window(tmp_path):
