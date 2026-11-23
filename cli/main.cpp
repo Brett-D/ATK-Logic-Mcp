@@ -8,6 +8,8 @@
 #include <vector>
 #include <sstream>
 #include <iomanip>
+#include <algorithm>
+#include <cmath>
 
 using namespace atkdl16;
 
@@ -90,6 +92,8 @@ static void print_usage() {
               << "  --mode <buffer|stream>        Capture mode (buffer = standard, stream = experimental, default: buffer)\n"
               << "  --trigger <ch:edge>           Trigger spec (e.g. ch0:rising, immediate, default: immediate)\n"
               << "  --out <dir>                   Output directory for captures (default: captures)\n"
+              << "  --timeout <sec>               Give up (Stop + drain) if not complete in time (default: 30)\n"
+              << "  --pwm0 <hz>                   Drive PWM0 (50 % duty, max 100 MHz) during this capture only, for loopback self-tests\n"
               << "  --json                        Output machine-readable JSON to stdout (default: off)\n";
 }
 
@@ -135,6 +139,8 @@ int main(int argc, char* argv[]) {
         CaptureConfig config;
         std::string out_dir = "captures";
         bool json_mode = false;
+        int timeout_sec = 30;
+        uint32_t pwm0_hz = 0;
 
         for (int i = 2; i < argc; ++i) {
             std::string arg = argv[i];
@@ -155,7 +161,29 @@ int main(int argc, char* argv[]) {
                 config.trigger = parse_trigger(argv[++i]);
             } else if (arg == "--out" && i + 1 < argc) {
                 out_dir = argv[++i];
+            } else if (arg == "--timeout" && i + 1 < argc) {
+                timeout_sec = std::max(1, std::stoi(argv[++i]));
+            } else if (arg == "--pwm0" && i + 1 < argc) {
+                pwm0_hz = static_cast<uint32_t>(std::stoul(argv[++i]));
             }
+        }
+
+        auto fail = [&](ErrorCode code, const std::string& message) {
+            CaptureResult res;
+            res.success = false;
+            res.error_code = code;
+            res.error_message = message;
+            res.data_integrity = DataIntegrity::Unknown;
+            res.capture_complete_received = false;
+            if (json_mode) {
+                std::cout << serialize_capture_result_json(res, out_dir);
+            } else {
+                std::cerr << message << "\n";
+            }
+            return 1;
+        };
+        if (pwm0_hz > 100'000'000) {
+            return fail(ErrorCode::InvalidCaptureConfig, "--pwm0 must be at most 100000000 Hz (a two-tick period at 200 MHz)");
         }
 
         Device dev;
@@ -176,6 +204,23 @@ int main(int argc, char* argv[]) {
         }
 
         CaptureEngine engine(dev);
+        // Optional self-test source: PWM0 at 50 % duty for the duration of this capture only
+        // (upstream encoding: 200 MHz base, [0x11, period LE32, high LE32]; [0x10] stops PWM0).
+        if (pwm0_hz > 0) {
+            uint32_t period = static_cast<uint32_t>(std::max(2.0, std::round(200'000'000.0 / pwm0_hz)));
+            uint32_t high = period / 2;
+            uint8_t pwm_on[9] = {0x11};
+            for (int b = 0; b < 4; ++b) {
+                pwm_on[1 + b] = static_cast<uint8_t>((period >> (8 * b)) & 0xFF);
+                pwm_on[5 + b] = static_cast<uint8_t>((high >> (8 * b)) & 0xFF);
+            }
+            auto pwm_err = dev.transport().send_command(CommandCode::PWM, pwm_on, sizeof(pwm_on));
+            if (!pwm_err) {
+                uint8_t pwm_off[1] = {0x10};
+                dev.transport().send_command(CommandCode::PWM, pwm_off, sizeof(pwm_off));
+                return fail(pwm_err.code, "Failed to start PWM0: " + pwm_err.message);
+            }
+        }
         if (!json_mode) {
             std::cout << "Starting capture: " << (config.sample_rate / 1'000'000.0) << " MHz, "
                       << config.duration_ms << " ms, " << config.enabled_channels.size() << " channels...\n";
@@ -189,8 +234,17 @@ int main(int argc, char* argv[]) {
                 } else {
                     std::cerr << "\rProgress: " << static_cast<int>(pct) << "% (" << cur << "/" << total << " samples)" << std::flush;
                 }
-            }
+            },
+            timeout_sec
         );
+        if (pwm0_hz > 0) {
+            uint8_t pwm_off[1] = {0x10};
+            auto pwm_err = dev.transport().send_command(CommandCode::PWM, pwm_off, sizeof(pwm_off));
+            if (!pwm_err) {
+                result.warnings.push_back("Failed to stop PWM0: " + pwm_err.message);
+                std::cerr << "\nWarning: failed to stop PWM0: " << pwm_err.message << "\n";
+            }
+        }
         if (!json_mode) {
             std::cout << "\n";
         } else {

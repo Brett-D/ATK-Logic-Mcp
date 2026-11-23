@@ -1,0 +1,54 @@
+# Out-of-tree MSVC build for atk_libsigrokdecode (upstream only ships autotools).
+cmake_minimum_required(VERSION 3.20)
+project(atk_libsigrokdecode C)
+
+set(SRD_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../srd" CACHE PATH "atk_libsigrokdecode source dir")
+set(VCPKG_INSTALLED "" CACHE PATH "vcpkg installed/<triplet> dir")
+set(PYTHON_ROOT "" CACHE PATH "Python NuGet tools dir (include/, libs/)")
+
+set(CMAKE_C_STANDARD 17)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+
+# config.h / version.h normally produced by ./configure
+set(SRD_PACKAGE_VERSION "0.6.0")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/gen/config.h"
+"#ifndef SRD_CONFIG_H\n#define SRD_CONFIG_H\n#define CONF_HOST \"x86_64-pc-windows-msvc\"\n#define PACKAGE_TARNAME \"libsigrokdecode\"\n#define PACKAGE_VERSION \"${SRD_PACKAGE_VERSION}\"\n#include \"version.h\"\n#endif\n")
+# irmp-main-sharedlib.c uses a GCC-only constructor; every API entry point already calls irmp_lib_autoinit().
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/gen/msvc_attribute_compat.h" "#define __attribute__(x)\n")
+file(READ "${SRD_SRC}/version.h.in" _ver)
+string(REPLACE "#undef SRD_PACKAGE_VERSION_MAJOR" "#define SRD_PACKAGE_VERSION_MAJOR 0" _ver "${_ver}")
+string(REPLACE "#undef SRD_PACKAGE_VERSION_MINOR" "#define SRD_PACKAGE_VERSION_MINOR 6" _ver "${_ver}")
+string(REPLACE "#undef SRD_PACKAGE_VERSION_MICRO" "#define SRD_PACKAGE_VERSION_MICRO 0" _ver "${_ver}")
+string(REPLACE "#undef SRD_PACKAGE_VERSION_STRING" "#define SRD_PACKAGE_VERSION_STRING \"${SRD_PACKAGE_VERSION}\"" _ver "${_ver}")
+string(REPLACE "#undef SRD_LIB_VERSION_CURRENT" "#define SRD_LIB_VERSION_CURRENT 4" _ver "${_ver}")
+string(REPLACE "#undef SRD_LIB_VERSION_REVISION" "#define SRD_LIB_VERSION_REVISION 0" _ver "${_ver}")
+string(REPLACE "#undef SRD_LIB_VERSION_AGE" "#define SRD_LIB_VERSION_AGE 0" _ver "${_ver}")
+string(REPLACE "#undef SRD_LIB_VERSION_STRING" "#define SRD_LIB_VERSION_STRING \"4:0:0\"" _ver "${_ver}")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/gen/version.h" "${_ver}")
+
+set(DEP_INCLUDES
+  "${CMAKE_CURRENT_BINARY_DIR}/gen"
+  "${SRD_SRC}"
+  "${VCPKG_INSTALLED}/include"
+  "${VCPKG_INSTALLED}/include/glib-2.0"
+  "${VCPKG_INSTALLED}/lib/glib-2.0/include"
+  "${PYTHON_ROOT}/include")
+set(DEP_LIBS
+  "${VCPKG_INSTALLED}/lib/glib-2.0.lib"
+  "${PYTHON_ROOT}/libs/python3.lib")
+
+# Decoder library linked statically into ATK-Logic.exe (atk_decoder.h has no dllexport markers).
+add_library(atk_decoder STATIC
+  ${SRD_SRC}/srd.c ${SRD_SRC}/session.c ${SRD_SRC}/decoder.c ${SRD_SRC}/instance.c
+  ${SRD_SRC}/log.c ${SRD_SRC}/util.c ${SRD_SRC}/exception.c ${SRD_SRC}/module_sigrokdecode.c
+  ${SRD_SRC}/type_decoder.c ${SRD_SRC}/error.c ${SRD_SRC}/version.c ${SRD_SRC}/atk_decoder.c)
+target_include_directories(atk_decoder PRIVATE ${DEP_INCLUDES})
+target_compile_definitions(atk_decoder PRIVATE _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS)
+target_compile_options(atk_decoder PRIVATE /utf-8 /W3)
+
+# IRMP helper DLL, loaded via ctypes by decoders/ir_irmp ("irmp.dll").
+add_library(irmp SHARED ${SRD_SRC}/irmp/irmp-main-sharedlib.c)
+target_include_directories(irmp PRIVATE ${DEP_INCLUDES} "${SRD_SRC}/irmp")
+target_compile_definitions(irmp PRIVATE _CRT_SECURE_NO_WARNINGS Py_LIMITED_API=0x03020000)
+target_compile_options(irmp PRIVATE /utf-8 /W3 /wd4828 "/FI${CMAKE_CURRENT_BINARY_DIR}/gen/msvc_attribute_compat.h")
+target_link_libraries(irmp PRIVATE ${DEP_LIBS})

@@ -6,6 +6,8 @@
 #include <sstream>
 #include <iomanip>
 #include <random>
+#include <cstdio>
+#include <cstdlib>
 
 namespace atkdl16 {
 
@@ -59,9 +61,26 @@ CaptureResult CaptureEngine::execute_capture(const CaptureConfig& config,
     }
 
     // 2. FLUSH_RX State
+    // Upstream ATK-Logic always ends a capture with Stop (0x15) and drains; a previous CLI run that was
+    // killed mid-capture never did, which leaves the FPGA armed and every later capture stalls at the
+    // pre-trigger depth. Send Stop first so each run starts from a known idle state.
     m_state = CaptureState::FlushRx;
+    {
+        auto pre_stop = build_stop_frame();
+        m_device.transport().write_bulk(EP_BULK_OUT, pre_stop.data(), pre_stop.size(), 100);
+    }
     m_device.wake_fpga();
     m_device.flush_buffers();
+
+    // Every exit path below (success, error, timeout) stops the FPGA and drains, as upstream does.
+    struct StopAndDrain {
+        Device& dev;
+        ~StopAndDrain() {
+            auto f = build_stop_frame();
+            dev.transport().write_bulk(EP_BULK_OUT, f.data(), f.size(), 100);
+            dev.flush_buffers();
+        }
+    } stop_guard{m_device};
 
     // 3. CONFIGURE State
     m_state = CaptureState::Configure;
@@ -104,6 +123,8 @@ CaptureResult CaptureEngine::execute_capture(const CaptureConfig& config,
 
     auto start_time = std::chrono::steady_clock::now();
     auto timeout_duration = std::chrono::seconds(timeout_sec);
+    // ATK_DL16_DEBUG=1 traces every bulk read and parsed message type to stderr.
+    const bool debug_trace = std::getenv("ATK_DL16_DEBUG") != nullptr;
 
     while (!m_stop_requested && !capture_complete) {
         // Check timeout
@@ -118,6 +139,9 @@ CaptureResult CaptureEngine::execute_capture(const CaptureConfig& config,
 
         size_t actual_len = 0;
         err = m_device.transport().read_bulk(EP_BULK_IN, raw_buf.data(), raw_buf.size(), actual_len, 200);
+        if (debug_trace && actual_len > 0) {
+            std::fprintf(stderr, "\n[dbg] read %zu bytes\n", actual_len);
+        }
         if (!err && err.code == ErrorCode::DeviceDisconnected) {
             m_state = CaptureState::Error;
             result.error_code = ErrorCode::DeviceDisconnected;
@@ -138,6 +162,9 @@ CaptureResult CaptureEngine::execute_capture(const CaptureConfig& config,
                 auto msg_opt = parser.pop_message();
                 if (!msg_opt) break;
                 const auto& msg = *msg_opt;
+                if (debug_trace) {
+                    std::fprintf(stderr, "[dbg] msg type=%d\n", static_cast<int>(msg.type));
+                }
 
                 switch (msg.type) {
                     case RxMessageType::ChannelData: {

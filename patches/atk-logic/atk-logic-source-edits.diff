@@ -1,0 +1,316 @@
+diff --git a/ATK-Logic.pro b/ATK-Logic.pro
+index 945e54b..5fb99b1 100644
+--- a/ATK-Logic.pro
++++ b/ATK-Logic.pro
+@@ -9,8 +9,10 @@ TARGET = ATK-Logic
+ 
+ PRECOMPILED_HEADER = $$PWD/stdafx.h
+ 
+-VERSION = 1.0.6.6
+-DEFINES += APP_VERSION_NUM=1066
++VERSION = 1.1.0.8
++# Was 1.0.6.6/1066. Raised per GitHub issue #5 so FPGA v2.22 devices (min app 1108) are accepted;
++# this bypasses the device-requested minimum-app-version check.
++DEFINES += APP_VERSION_NUM=1108
+ DEFINES += APP_VERSION=\\\"$$VERSION\\\"
+ DEFINES += FPGA_MIN_VERSION_NUM=115
+ 
+@@ -73,6 +75,8 @@ SOURCES += \
+         pv/usb/usb_server.cpp \
+         pv/utils/qtlockedfile/qtlockedfile.cpp
+ 
++win32: SOURCES += pv/utils/qtlockedfile/qtlockedfile_win.cpp
++unix: SOURCES += pv/utils/qtlockedfile/qtlockedfile_unix.cpp
+ HEADERS += \
+         lib/include/atk_decoder.h \
+         pv/controller/session_error.h \
+@@ -123,6 +127,13 @@ win32 {
+         QMAKE_POST_LINK += xcopy /s /y \"$$SRC_DIR_DLL\" \"$$DST_DIR_DLL\"
+     }
+ 
++# External dependencies: atk_libsigrokdecode (atk_decoder.lib), libusb-1.0, glib-2.0, Python 3 (stable ABI).
++# Stage headers in $$ATK_DEPS_DIR/include and import/static libs in $$ATK_DEPS_DIR/lib,
++# or override on the command line: qmake ATK_DEPS_DIR=<dir>
++isEmpty(ATK_DEPS_DIR): ATK_DEPS_DIR = $$PWD/lib
++INCLUDEPATH += $$PWD/lib/include $$ATK_DEPS_DIR/include $$ATK_DEPS_DIR/include/libusb-1.0
++win32: LIBS += -L$$ATK_DEPS_DIR/lib -latk_decoder -llibusb-1.0 -lglib-2.0 -lpython3
++
+ RESOURCES += qml.qrc \
+     resource.qrc
+ 
+diff --git a/main.cpp b/main.cpp
+index dabfe6f..1661ead 100644
+--- a/main.cpp
++++ b/main.cpp
+@@ -7,7 +7,6 @@
+ #include <QTranslator>
+ #include <QQuickWindow>
+ #include <QFontDatabase>
+-#include "QBreakpadHandler.h"
+ #include "./pv/controller/session_controller.h"
+ #include "./pv/controller/session_error.h"
+ #include "./pv/controller/setting.h"
+@@ -75,9 +74,6 @@ int main(int argc, char* argv[])
+     app.setApplicationName("ATK-LogicView");
+     app.setStyle(new MenuStyle());
+     QString tempDir=QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+-#if defined (QT_NO_DEBUG) && defined (Q_CC_MSVC)
+-    QBreakpadInstance.setDumpPath(tempDir+"/crash");
+-#endif
+     //载入全局字体
+     QFont font = app.font();
+     int fontId = QFontDatabase::addApplicationFont(":/resource/SourceHanSansCN-Regular.otf");
+diff --git a/pv/draw/frameless_window.cpp b/pv/draw/frameless_window.cpp
+index a94c011..facde85 100644
+--- a/pv/draw/frameless_window.cpp
++++ b/pv/draw/frameless_window.cpp
+@@ -342,8 +342,9 @@ QRect FramelessWindow::getScreenQRect()
+ 
+ void FramelessWindow::startUpdate(QString fpgaURL, QString mcuURL)
+ {
+-    m_updateDownload->m_usb=m_dataService->getUSBServer()->PortGetUSB(m_connectPort);
+-    m_updateDownload->startUpdate(fpgaURL,mcuURL);
++    Q_UNUSED(fpgaURL);
++    Q_UNUSED(mcuURL);
++    // firmware update disabled
+ }
+ 
+ void FramelessWindow::startDownloadFirmware()
+@@ -353,11 +354,7 @@ void FramelessWindow::startDownloadFirmware()
+ 
+ void FramelessWindow::enterBootloader()
+ {
+-    if(m_dataService->getUSBServer()->m_errorPort!=-1)
+-    {
+-        m_updateDownload->m_usb=m_dataService->getUSBServer()->PortGetUSB(m_dataService->getUSBServer()->m_errorPort);
+-        m_updateDownload->startUpdate();
+-    }
++    // bootloader entry disabled
+ }
+ 
+ QString FramelessWindow::getVersionStr()
+@@ -482,30 +479,7 @@ QString FramelessWindow::pathRepair_(QString path)
+ 
+ void FramelessWindow::updateApp()
+ {
+-#ifdef Q_OS_WIN
+-    QString path=QCoreApplication::applicationDirPath()+"/update.exe";
+-    QFile file(path);
+-    if(file.exists()){
+-        QFile::setPermissions(path, QFile::ReadOther | QFile::WriteOther);
+-        if(!file.remove())
+-            m_dataService->getWindowError()->setError_msg(QObject::tr("删除文件失败，请检查更新程序是否启动中。"),true);
+-    }
+-    bool isOK=false;
+-#ifdef _WIN64
+-    isOK=QFile::copy(":/resource/update/update_x64.exe",path);
+-#else
+-    isOK=QFile::copy(":/resource/update/update_x86.exe",path);
+-#endif
+-    if(isOK){
+-        QStringList arguments;
+-        arguments.append("ATK-Logic");
+-        isOK=QProcess::startDetached(path,arguments,QCoreApplication::applicationDirPath());
+-        if(isOK)
+-            windowClose();
+-    }
+-    if(!isOK)
+-        m_dataService->getWindowError()->setError_msg(QObject::tr("权限不足，请以管理员权限启动后再试。"),true);
+-#endif
++    // self-updater removed
+ }
+ 
+ void FramelessWindow::checkUpdateNow()
+@@ -600,7 +574,6 @@ void FramelessWindow::receiveDeviceCreanInfo(QString name, QString usbName, qint
+         usb->m_mcuVersion=mcuVersions;
+         usb->m_fpgaVersion=fpgaVersions;
+         createSession(name,m_dataService->getUSBServer()->m_channelCount,1,port,usbName,level);
+-        checkHardwareUpdate();
+         emit sendConnectSchedule(100,state);
+     }
+         break;
+diff --git a/pv/static/data_service.h b/pv/static/data_service.h
+index 694770e..4ed9220 100644
+--- a/pv/static/data_service.h
++++ b/pv/static/data_service.h
+@@ -50,7 +50,7 @@ public:
+     QVariantList m_log;         //全局日志列表
+     QMutex m_logLock;           //全局日志锁
+     QString m_tempDir;          //全局写出目录
+-    QString m_downloadPath="http://47.111.11.73/ATK-Prod/ATK-Logic";//全局固件下载地址
++    QString m_downloadPath="http://0.0.0.0/";//全局固件下载地址 (disabled)
+ 
+ private:
+     DataService();
+diff --git a/pv/static/zip_helper.cpp b/pv/static/zip_helper.cpp
+index 28b3568..8d9ad51 100644
+--- a/pv/static/zip_helper.cpp
++++ b/pv/static/zip_helper.cpp
+@@ -63,15 +63,22 @@ bool ZipHelper::unZipDir(QString &filePath, QString savePath)
+         if(zipreader.fileInfoList().size()<=0)
+             return false;
+         double count=zipreader.fileInfoList().size();
++        const QString baseDir = QDir::cleanPath(savePath);
+         for (int i = 0; i < count; ++i) {
+-            QStringList paths = zipreader.fileInfoList().at(i).filePath.split("/");
++            const QString entryName = zipreader.fileInfoList().at(i).filePath;
++            // Zip-slip guard: reject traversal, absolute, drive-letter/ADS names and anything escaping savePath.
++            if (entryName.contains("..") || entryName.contains(':') || QDir::isAbsolutePath(entryName)
++                    || entryName.startsWith('/') || entryName.startsWith('\\')
++                    || !QDir::cleanPath(savePath + "/" + entryName).startsWith(baseDir + "/"))
++                continue;
++            QStringList paths = entryName.split("/");
+             paths.removeLast();
+             QString path = paths.join("/");
+             QDir subdir(savePath + "/" + path);
+             if (!subdir.exists())
+                 dir.mkpath(QString::fromLocal8Bit("%1").arg(savePath + "/" + path));
+ 
+-            QFile file(savePath + "/" + zipreader.fileInfoList().at(i).filePath);
++            QFile file(QDir::cleanPath(savePath + "/" + entryName));
+             file.open(QIODevice::WriteOnly);
+             //注意编码问题
+             QByteArray dt = zipreader.fileInfoList().at(i).filePath.toUtf8();
+diff --git a/pv/thread/connect.cpp b/pv/thread/connect.cpp
+index 8efbee3..8860b76 100644
+--- a/pv/thread/connect.cpp
++++ b/pv/thread/connect.cpp
+@@ -40,28 +40,17 @@ void ConnectDevice::CheckDeviceCreanInfo(USBControl *usb, qint32 port)
+         Data_* data2 = new Data_();
+         usb->GetMCUVersion();
+         {
+-            qint32 count_2=0,count_3=0;
++            qint32 count_3=0;
+             while(usb->ReadSynchronous(data2)){//清空mcu缓存
+                 delete[] data2->buf;
+-                if(data2->buf[0]>200 && data2->buf[511]>200){
+-                    count_2++;
++                data2->buf=nullptr;
++                count_3++;
++                if(count_3==100)
++                    usb->GetDeviceData(false);
++                if(count_3>900)
+                     QThread::msleep(10);
+-                    if(count_2>120){
+-                        usb->m_deviceVersion=0;
+-                        g_isUpdata=1;
+-                        usb->EnterBootloader();
+-                        delete data2;
+-                        return;
+-                    }
+-                }else{
+-                    count_3++;
+-                    if(count_3==100)
+-                        usb->GetDeviceData(false);
+-                    if(count_3>900)
+-                        QThread::msleep(10);
+-                    if(count_3>1100)
+-                        break;
+-                }
++                if(count_3>1100)
++                    break;
+             }
+         }
+         LogHelp::write(QString("    第%1次尝试连接").arg(QString::number(count+1)));
+@@ -92,11 +81,11 @@ void ConnectDevice::CheckDeviceCreanInfo(USBControl *usb, qint32 port)
+                 }
+                 else if(data2->buf[3]==0x62)
+                 {
++                    // Device is in bootloader mode: report it, never flash it.
+                     usb->m_deviceVersion=data2->buf[6];
+                     delete[] data2->buf;
+                     delete data2;
+-                    g_isUpdata=1;
+-                    emit EnterBootloader(port, false);
++                    emit SendDeviceCreanInfo("","",port,0,0,0,0,1);
+                     return;
+                 }
+             }
+@@ -189,6 +178,9 @@ void ConnectDevice::CheckDeviceCreanInfo(USBControl *usb, qint32 port)
+ 
+ void ConnectDevice::CheckUpdate(int version, bool isShowError)
+ {
++    Q_UNUSED(version);
++    Q_UNUSED(isShowError);
++    return; // online update check disabled
+     LogHelp::write(QString("检查软件更新"));
+     while(!m_updateMutex.tryLock(10))
+         QApplication::processEvents(QEventLoop::AllEvents, 100);
+@@ -200,6 +192,10 @@ void ConnectDevice::CheckUpdate(int version, bool isShowError)
+ 
+ void ConnectDevice::CheckHardwareUpdate(int MCUVersion, int FPGAVersion, int deviceVersion)
+ {
++    Q_UNUSED(MCUVersion);
++    Q_UNUSED(FPGAVersion);
++    Q_UNUSED(deviceVersion);
++    return; // online firmware check disabled
+     LogHelp::write(QString("检查硬件更新"));
+     while(!m_updateMutex.tryLock(10))
+         QApplication::processEvents(QEventLoop::AllEvents, 100);
+diff --git a/pv/thread/thread_download.cpp b/pv/thread/thread_download.cpp
+index 1cf92f6..83b1843 100644
+--- a/pv/thread/thread_download.cpp
++++ b/pv/thread/thread_download.cpp
+@@ -23,6 +23,8 @@ ThreadDownload::~ThreadDownload()
+ 
+ void ThreadDownload::startDownload(qint32 index)
+ {
++    Q_UNUSED(index);
++    return; // firmware download disabled
+     m_index=index;
+     switch(index){
+     case 0:
+@@ -58,6 +60,10 @@ void ThreadDownload::startUpdate()
+ 
+ void ThreadDownload::startUpdate(QString fpgaURL, QString mcuURL)
+ {
++    Q_UNUSED(fpgaURL);
++    Q_UNUSED(mcuURL);
++    emit SendDownloadSchedule(100,4,0); // firmware update disabled: report failure
++    return;
+     LogHelp::write(QString("启动硬件更新"));
+     m_index=0;
+     emit SendDownloadSchedule(0,2,m_index);
+@@ -73,6 +79,7 @@ void ThreadDownload::startUpdate(QString fpgaURL, QString mcuURL)
+ 
+ void ThreadDownload::startDownloadFirmware()
+ {
++    return; // firmware flashing disabled
+     LogHelp::write(QString("    开始升级MCU"));
+     m_index=0;
+     m_fileName=m_mcuURL.split("/").last();
+@@ -250,6 +257,9 @@ void ThreadDownload::onError(QNetworkReply::NetworkError error)
+ 
+ void ThreadDownload::onEnterBootloader(qint32 port, bool errorModel)
+ {
++    Q_UNUSED(port);
++    Q_UNUSED(errorModel);
++    return; // bootloader entry disabled
+     g_updataState=1;
+     m_port=port;
+     m_usb=m_usbServer->PortGetUSB(port);
+diff --git a/qml/main.qml b/qml/main.qml
+index 5ed9638..efd2213 100644
+--- a/qml/main.qml
++++ b/qml/main.qml
+@@ -407,7 +407,6 @@ FramelessWindow {
+             loadingWindow.visible=true;
+             if(state===0)
+             {
+-                checkUpdate(parseInt(app_VERSION_NUM), false);
+                 loadingCloseTimer.start();
+                 root.initMethod();
+             }
+diff --git a/resource.qrc b/resource.qrc
+index 15394e1..28ca075 100644
+--- a/resource.qrc
++++ b/resource.qrc
+@@ -256,8 +256,6 @@
+         <file>resource/icon/ExportBIN.png</file>
+         <file>resource/icon/dark/ExportBINDisable.png</file>
+         <file>resource/icon/light/ExportBINDisable.png</file>
+-        <file>resource/update/update_x64.exe</file>
+-        <file>resource/update/update_x86.exe</file>
+         <file>resource/icon/GlitchRemovalSelectAll.png</file>
+         <file>resource/icon/GlitchRemovalSelectAllEnter.png</file>
+         <file>resource/SourceHanSansCN-Regular.otf</file>

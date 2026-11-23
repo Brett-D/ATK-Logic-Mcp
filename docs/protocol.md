@@ -147,6 +147,12 @@ return crc ^ 0xFFFFFFFF;
 - **Purpose**: Halts active capture or drains buffer.
 - **Payload**: None (Length = 1, Payload = empty).
 
+### 4.5 `0x17`: PWM
+- **Purpose**: Drives the analyzer's PWM0 stimulus output (used by `atk-dl16 capture --pwm0`).
+- **Payload** (from upstream `SessionController::pwmStart`; 200 MHz time base):
+  - Start PWM0: `[0x11, period (uint32 LE), high (uint32 LE)]`, where `period = round(200 MHz / f)` and `high` is the high time in the same ticks (`period / 2` for 50 % duty).
+  - Stop PWM0: `[0x10]`.
+
 ---
 
 ## 5. Device-to-Host Response Framing (RX)
