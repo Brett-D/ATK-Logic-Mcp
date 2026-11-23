@@ -46,7 +46,7 @@ stateDiagram-v2
 | **`DISCONNECTED`** | No device handle acquired. Device is unreferenced or closed. | Release interface, close libusb device. | `OPEN`, `DISCONNECTED` |
 | **`OPEN`** | Device handle acquired via `libusb_open()`, interface 0 claimed. | Set auto kernel detach, claim interface 0. | `DEVICE_READY`, `DISCONNECTED`, `ERROR` |
 | **`DEVICE_READY`** | Device enumerated, MCU/FPGA versions identified, idle. | Clear internal queues, unlock capture pipeline. | `FLUSH_RX`, `DISCONNECTED` |
-| **`FLUSH_RX`** | Pre-capture sanitization: reading and discarding stale USB buffers. | Loop `ReadSynchronous()` until buffer empty (max 50ms). | `CONFIGURE`, `ERROR` |
+| **`FLUSH_RX`** | Pre-capture sanitization: stopping a capture left armed by a killed process and discarding stale USB buffers. | Send `Stop` (`0x15`), then read 16 KB at a 50 ms timeout until a read comes back empty (max 1000 reads). | `CONFIGURE`, `ERROR` |
 | **`CONFIGURE`** | Sending `ParameterSetting` (`0x11`) with sample rate, depth, threshold. | Send framed `0x11` command via Bulk OUT. | `SETTLE`, `ERROR` |
 | **`SETTLE`** | Mandatory hardware DAC threshold voltage stabilization period. | Non-blocking or timer sleep of exactly **30 ms**. | `ARM_TRIGGER`, `ERROR` |
 | **`ARM_TRIGGER`** | Sending `SimpleTrigger` (`0x12`) with channel triggers & instant flag. | Send framed `0x12` command and verify Ack (Order 4, status 3). | `CAPTURING`, `ERROR` |
@@ -72,13 +72,14 @@ if (reft) {
 The DL16 utilizes high-speed comparator circuits whose threshold voltages are programmed by a digital-to-analog converter (DAC) controlled by the FPGA. When `ParameterSetting` is issued, the DAC output slews to the target voltage (e.g. 1.6V or 3.3V). If trigger acquisition is armed immediately, the input comparator may false-trigger on the intermediate voltage slope. The 30 ms wait allows the threshold voltage and decoupling filters to fully stabilize.
 
 ### 3.2 Pre-Capture Flush Routine
-Before any configuration, `FLUSH_RX` must drain the MCU/FPGA FIFO:
+Before any configuration, `FLUSH_RX` sends `Stop` (`0x15`) and drains the MCU/FPGA FIFO, mirroring upstream's "clear MCU cache" loop:
 ```text
-while (ReadSynchronous(buffer, timeout=5ms) > 0) {
+send(Stop);
+while (reads++ < 1000 && ReadSynchronous(buffer[16 KB], timeout=50ms) > 0) {
     discard(buffer);
 }
 ```
-This ensures no leftover packets from a prior aborted capture corrupt the stream parser.
+This ensures no leftover packets from a prior aborted capture corrupt the stream parser. A capture that was killed mid-run leaves the FPGA armed, and without the `Stop` the next capture stalls at the pre-trigger depth. For the same reason, every exit path of `execute_capture` (success, error or timeout) sends `Stop` and drains again, and `Device::open()` does the same before it reads the MCU version.
 
 ### 3.3 Buffer Cropping & Trigger Alignment (Order 3 Policy)
 When `Order 3` (`TriggerOffset`) arrives:

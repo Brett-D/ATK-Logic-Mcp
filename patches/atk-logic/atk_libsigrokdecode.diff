@@ -1,0 +1,13 @@
+diff --git a/instance.c b/instance.c
+index 48cfa1a..53dbba5 100644
+--- a/instance.c
++++ b/instance.c
+@@ -1050,7 +1050,7 @@ static gboolean _skip_process(struct srd_decoder_inst *di)
+     gboolean ret = FALSE;
+     uint64_t j;
+     GSList *l, *cond;
+-    unsigned int num_conditions;
++    unsigned int num_conditions = g_slist_length(di->condition_list);
+ 
+     for (l = di->condition_list, j = 0; l; l = l->next, j++) {
+         cond = l->data;

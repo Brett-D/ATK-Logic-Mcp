@@ -8,6 +8,8 @@ Derived from the official [alientek-openedv/atk-logic](https://github.com/alient
 3. A deterministic digital waveform analysis suite (NumPy-accelerated) for cycle-by-cycle PWM, deadtime, shoot-through detection, and three-phase motor inverter analysis.
 4. An autonomous MCP server (`atk-dl16-mcp`) allowing AI assistants (Claude Code, Codex, Pi, and other MCP clients) to directly control logic captures, inspect signals, and execute HIL test assertions.
 
+DL16 Plus field notes (FPGA 2.22 capture quirk, PWM0 loopback health check, GitHub Copilot registration, Windows build) are in [docs/dl16-plus-notes.md](docs/dl16-plus-notes.md). Scripts for viewing and exporting captures are in [`tools/`](tools/README.md), and hardening patches for the ATK-Logic GUI are in [`patches/atk-logic/`](patches/atk-logic/README.md).
+
 ---
 
 ## 1. System Architecture
@@ -132,6 +134,8 @@ Device Information:
   --trigger ch0:rising `
   --out captures
 ```
+
+Add `--timeout <sec>` to bound the run, including the wait for a trigger (default 30 s; on expiry the CLI sends Stop and drains). Add `--pwm0 <hz>` to drive the analyzer's PWM0 output at 50 % duty during the capture as a loopback self-test (see [docs/dl16-plus-notes.md](docs/dl16-plus-notes.md)).
 
 ### Inspect Stored Edges
 ```powershell
@@ -259,7 +263,7 @@ codex mcp add atk-dl16 -- python -m atk_dl16_mcp
 ### Exposed MCP Tools
 
 1. **`logic_status()`**: Returns connected hardware status, model, firmware, link speed, and lock state.
-2. **`logic_capture(...)`**: Performs logic capture on specified channels, sample rate, duration, and threshold voltage.
+2. **`logic_capture(...)`**: Performs logic capture on specified channels, sample rate, duration, and threshold voltage. `timeout_s` bounds the capture (default 30 s) and `pwm0_hz` drives PWM0 during it for a loopback self-test.
 3. **`logic_measure_pwm(capture_id, channel, ...)`**: Deterministically computes cycle-by-cycle frequency, duty cycle, high/low time, jitter, and glitches.
 4. **`logic_measure_pair(capture_id, high_ch, low_ch)`**: Analyzes half-bridge switching pairs: rising/falling deadtime, minimum deadtime, and shoot-through overlap detection.
 5. **`logic_measure_three_phase(capture_id, u, v, w)`**: Analyzes 3-phase motor drive inverter signals: 120-degree phase shifts, frequency balance, and symmetry.

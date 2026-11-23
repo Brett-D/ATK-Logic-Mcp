@@ -34,6 +34,11 @@ Error Device::open(int port) {
 
     m_is_open = true;
 
+    // A previous process may have exited mid-capture; stop the FPGA and drain its stale stream
+    // before querying, otherwise the MCU version read picks up leftover capture packets.
+    m_transport->send_command(CommandCode::Stop);
+    flush_buffers();
+
     // Query device telemetry and FPGA state
     err = query_info(m_info);
     if (!err) {
@@ -82,12 +87,13 @@ Error Device::sleep_fpga() {
 
 Error Device::flush_buffers() {
     if (!is_open()) return {ErrorCode::DeviceDisconnected, "Device not open", false, ""};
-    std::vector<uint8_t> dump(2048);
+    // Mirrors upstream's "clear MCU cache" loop: 50 ms reads until the endpoint is empty (max 1000 reads).
+    std::vector<uint8_t> dump(READ_TRANSFER_BUFFER_SIZE);
     size_t actual = 0;
     int tries = 0;
-    while (tries++ < 50) {
-        m_transport->read_bulk(EP_BULK_IN, dump.data(), dump.size(), actual, 5);
-        if (actual == 0) {
+    while (tries++ < 1000) {
+        auto err = m_transport->read_bulk(EP_BULK_IN, dump.data(), dump.size(), actual, 50);
+        if (!err || actual == 0) {
             break;
         }
     }
@@ -111,10 +117,22 @@ Error Device::query_info(DeviceInfo& info) {
         return err;
     }
 
+    // Skip any stale FPGA packets still queued ahead of the MCU reply.
     uint8_t mcu_resp[512] = {0};
     size_t actual_len = 0;
-    err = m_transport->read_bulk(EP_BULK_IN, mcu_resp, sizeof(mcu_resp), actual_len, 200);
-    if (!err || actual_len < 9) {
+    bool got_version = false;
+    for (int attempt = 0; attempt < 20 && !got_version; ++attempt) {
+        std::memset(mcu_resp, 0, sizeof(mcu_resp));
+        err = m_transport->read_bulk(EP_BULK_IN, mcu_resp, sizeof(mcu_resp), actual_len, 200);
+        if (!err) {
+            return err;
+        }
+        if (actual_len == 0 && attempt % 5 == 4) {
+            m_transport->write_bulk(EP_BULK_OUT, mcu_cmd, sizeof(mcu_cmd), 150);
+        }
+        got_version = actual_len >= 9 && mcu_resp[0] == 0x0A && mcu_resp[1] == 0x81;
+    }
+    if (actual_len < 9) {
         return {ErrorCode::ProtocolError, "MCU version response timeout or truncated", true, "Retry query"};
     }
 

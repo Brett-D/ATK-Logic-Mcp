@@ -57,6 +57,13 @@ def _find_cli() -> Optional[Path]:
     return None
 
 
+def _tail_text(text: Any, limit: int = 300) -> str:
+    """Last `limit` characters of subprocess output that may be bytes, str or None."""
+    if isinstance(text, bytes):
+        text = text.decode(errors="replace")
+    return (text or "").strip()[-limit:]
+
+
 def _is_certified_golden(cap_path: Path) -> bool:
     """Verify that file is an authenticated golden reference fixture with matching manifest."""
     try:
@@ -201,11 +208,14 @@ def logic_status() -> Dict[str, Any]:
         return {"connected": False, "error": "CLI executable atk-dl16.exe not built yet"}
 
     # Run info directly with a single device connection
-    p_info = subprocess.run([str(cli), "info"], capture_output=True, text=True)
-    if p_info.returncode != 0:
-        # Retry once after brief settle in case USB bus was settling from previous operation
-        time.sleep(0.3)
-        p_info = subprocess.run([str(cli), "info"], capture_output=True, text=True)
+    try:
+        p_info = subprocess.run([str(cli), "info"], capture_output=True, text=True, timeout=15)
+        if p_info.returncode != 0:
+            # Retry once after brief settle in case USB bus was settling from previous operation
+            time.sleep(0.3)
+            p_info = subprocess.run([str(cli), "info"], capture_output=True, text=True, timeout=15)
+    except subprocess.TimeoutExpired:
+        return {"connected": True, "ready": False, "message": "atk-dl16 info timed out after 15 s; replug the DL16"}
 
     if p_info.returncode != 0:
         err_msg = p_info.stderr.strip() or p_info.stdout.strip()
@@ -242,11 +252,16 @@ def logic_capture(
     duration_ms: int = 20,
     threshold_voltage: float = 1.6,
     trigger: str = "immediate",
-    mode: str = "buffer"
+    mode: str = "buffer",
+    timeout_s: float = 30.0,
+    pwm0_hz: int = 0
 ) -> Dict[str, Any]:
     """
     Perform a logic capture on specified channels and save waveforms to disk.
     Propagates complete machine-readable evidence contract via CLI --json flag.
+    timeout_s bounds the capture, including any wait for a trigger; on expiry the CLI stops the FPGA
+    and reports a timeout. If the CLI itself hangs, it is killed 20 s later.
+    pwm0_hz > 0 drives the analyzer's own PWM0 pin (50 % duty) during the capture, for loopback self-tests.
     """
     cli = _find_cli()
     if not cli:
@@ -262,6 +277,7 @@ def logic_capture(
 
     ch_str = ",".join(str(c) for c in channels)
     out_dir = str(DATA_DIR / "captures")
+    cli_timeout = max(1, int(timeout_s))
 
     cmd = [
         str(cli), "capture",
@@ -272,10 +288,26 @@ def logic_capture(
         "--trigger", trigger,
         "--mode", mode,
         "--out", out_dir,
+        "--timeout", str(cli_timeout),
         "--json"
     ]
+    if pwm0_hz > 0:
+        cmd[-1:-1] = ["--pwm0", str(int(pwm0_hz))]
 
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        # The CLI stops the FPGA itself after cli_timeout; the margin covers its Stop/drain and file writes.
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=cli_timeout + 20)
+    except subprocess.TimeoutExpired as ex:
+        stderr_tail = _tail_text(ex.stderr)
+        return {
+            "success": False,
+            "error_code": "CLI_TIMEOUT",
+            "message": f"atk-dl16 capture did not exit within {cli_timeout + 20} s, so the CLI was killed. Replug the DL16 if the next call fails.",
+            "evidence_source": "REAL_HARDWARE",
+            "data_integrity": "UNKNOWN",
+            "capture_complete_received": False,
+            "warnings": [stderr_tail] if stderr_tail else []
+        }
     try:
         data = json.loads(proc.stdout)
         return data

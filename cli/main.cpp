@@ -8,6 +8,8 @@
 #include <vector>
 #include <sstream>
 #include <iomanip>
+#include <algorithm>
+#include <cmath>
 
 using namespace atkdl16;
 
@@ -90,6 +92,8 @@ static void print_usage() {
               << "  --mode <buffer|stream>        Capture mode (buffer = standard, stream = experimental, default: buffer)\n"
               << "  --trigger <ch:edge>           Trigger spec (e.g. ch0:rising, immediate, default: immediate)\n"
               << "  --out <dir>                   Output directory for captures (default: captures)\n"
+              << "  --timeout <sec>               Give up (Stop + drain) if not complete in time (default: 30)\n"
+              << "  --pwm0 <hz>                   Drive PWM0 (50 % duty) during this capture only, for loopback self-tests\n"
               << "  --json                        Output machine-readable JSON to stdout (default: off)\n";
 }
 
@@ -135,6 +139,8 @@ int main(int argc, char* argv[]) {
         CaptureConfig config;
         std::string out_dir = "captures";
         bool json_mode = false;
+        int timeout_sec = 30;
+        uint32_t pwm0_hz = 0;
 
         for (int i = 2; i < argc; ++i) {
             std::string arg = argv[i];
@@ -155,6 +161,10 @@ int main(int argc, char* argv[]) {
                 config.trigger = parse_trigger(argv[++i]);
             } else if (arg == "--out" && i + 1 < argc) {
                 out_dir = argv[++i];
+            } else if (arg == "--timeout" && i + 1 < argc) {
+                timeout_sec = std::max(1, std::stoi(argv[++i]));
+            } else if (arg == "--pwm0" && i + 1 < argc) {
+                pwm0_hz = static_cast<uint32_t>(std::stoul(argv[++i]));
             }
         }
 
@@ -176,6 +186,18 @@ int main(int argc, char* argv[]) {
         }
 
         CaptureEngine engine(dev);
+        // Optional self-test source: PWM0 at 50 % duty for the duration of this capture only
+        // (upstream encoding: 200 MHz base, [0x11, period LE32, high LE32]; [0x10] stops PWM0).
+        if (pwm0_hz > 0) {
+            uint32_t period = static_cast<uint32_t>(std::max(2.0, std::round(200'000'000.0 / pwm0_hz)));
+            uint32_t high = period / 2;
+            uint8_t pwm_on[9] = {0x11};
+            for (int b = 0; b < 4; ++b) {
+                pwm_on[1 + b] = static_cast<uint8_t>((period >> (8 * b)) & 0xFF);
+                pwm_on[5 + b] = static_cast<uint8_t>((high >> (8 * b)) & 0xFF);
+            }
+            dev.transport().send_command(CommandCode::PWM, pwm_on, sizeof(pwm_on));
+        }
         if (!json_mode) {
             std::cout << "Starting capture: " << (config.sample_rate / 1'000'000.0) << " MHz, "
                       << config.duration_ms << " ms, " << config.enabled_channels.size() << " channels...\n";
@@ -189,8 +211,13 @@ int main(int argc, char* argv[]) {
                 } else {
                     std::cerr << "\rProgress: " << static_cast<int>(pct) << "% (" << cur << "/" << total << " samples)" << std::flush;
                 }
-            }
+            },
+            timeout_sec
         );
+        if (pwm0_hz > 0) {
+            uint8_t pwm_off[1] = {0x10};
+            dev.transport().send_command(CommandCode::PWM, pwm_off, sizeof(pwm_off));
+        }
         if (!json_mode) {
             std::cout << "\n";
         } else {
