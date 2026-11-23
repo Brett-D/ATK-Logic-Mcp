@@ -15,6 +15,8 @@ from pathlib import Path
 
 import numpy as np
 
+from capture_files import load_channel, load_meta
+
 TEMPLATE = Path(__file__).resolve().parent / "viewer_template.html"
 
 
@@ -26,13 +28,8 @@ def newest_capture() -> Path:
     return max(dirs, key=lambda d: d.stat().st_mtime)
 
 
-def load_channel(cap: Path, ch: int, n: int) -> np.ndarray:
-    raw = np.fromfile(cap / f"ch{ch:02d}.bits", dtype=np.uint8)
-    return np.unpackbits(raw, bitorder="little")[:n]
-
-
 def build_data(cap: Path, cfg: dict) -> dict:
-    meta = json.loads((cap / "meta.json").read_text(encoding="utf-8"))
+    meta = load_meta(cap)
     n = int(meta["actual_samples"])
     rate = float(meta["sample_rate"])
     labels = {int(k): str(v) for k, v in cfg.get("labels", {}).items()}

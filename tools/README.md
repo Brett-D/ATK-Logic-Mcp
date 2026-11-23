@@ -11,6 +11,8 @@ The scripts need Python 3.10+ and NumPy. `plot.py` also needs matplotlib, and `m
 | `plot.py` | Draws chosen channels over a time window as a static PNG. |
 | `mcp_probe.py` | Calls the MCP server's tools from a shell, without an AI client. |
 
+`view.py`, `bits2csv.py` and `plot.py` load captures through `capture_files.py`, which refuses a `.bits` file holding fewer samples than `meta.json` declares rather than drawing or exporting samples that were never recorded.
+
 ## view.py
 
 ```powershell

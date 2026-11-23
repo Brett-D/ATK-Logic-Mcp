@@ -88,10 +88,12 @@ Error Device::sleep_fpga() {
 Error Device::flush_buffers() {
     if (!is_open()) return {ErrorCode::DeviceDisconnected, "Device not open", false, ""};
     // Mirrors upstream's "clear MCU cache" loop: 50 ms reads until the endpoint is empty (max 1000 reads).
+    // The 2 s cap bounds a device that keeps trickling data, so callers' worst-case run time stays known.
     std::vector<uint8_t> dump(READ_TRANSFER_BUFFER_SIZE);
     size_t actual = 0;
     int tries = 0;
-    while (tries++ < 1000) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (tries++ < 1000 && std::chrono::steady_clock::now() < deadline) {
         auto err = m_transport->read_bulk(EP_BULK_IN, dump.data(), dump.size(), actual, 50);
         if (!err || actual == 0) {
             break;

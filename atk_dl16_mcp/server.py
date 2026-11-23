@@ -27,6 +27,12 @@ server = MCPServer("atk-dl16-mcp")
 
 CLI_PATH = ROOT_DIR / "build" / "Release" / "atk-dl16.exe"
 
+# Backstops for a hung CLI rather than normal limits. Opening the device (query retries, and drains
+# capped at 2 s each) takes at most about 35 s; a capture adds about 7 s of setup and cleanup plus
+# its artifact writes.
+INFO_TIMEOUT_S = 45
+CAPTURE_EXIT_MARGIN_S = 90
+
 
 def _find_cli() -> Optional[Path]:
     # 1. Check explicit environment override
@@ -209,13 +215,13 @@ def logic_status() -> Dict[str, Any]:
 
     # Run info directly with a single device connection
     try:
-        p_info = subprocess.run([str(cli), "info"], capture_output=True, text=True, timeout=15)
+        p_info = subprocess.run([str(cli), "info"], capture_output=True, text=True, timeout=INFO_TIMEOUT_S)
         if p_info.returncode != 0:
             # Retry once after brief settle in case USB bus was settling from previous operation
             time.sleep(0.3)
-            p_info = subprocess.run([str(cli), "info"], capture_output=True, text=True, timeout=15)
+            p_info = subprocess.run([str(cli), "info"], capture_output=True, text=True, timeout=INFO_TIMEOUT_S)
     except subprocess.TimeoutExpired:
-        return {"connected": True, "ready": False, "message": "atk-dl16 info timed out after 15 s; replug the DL16"}
+        return {"connected": True, "ready": False, "message": f"atk-dl16 info timed out after {INFO_TIMEOUT_S} s; replug the DL16"}
 
     if p_info.returncode != 0:
         err_msg = p_info.stderr.strip() or p_info.stdout.strip()
@@ -260,7 +266,8 @@ def logic_capture(
     Perform a logic capture on specified channels and save waveforms to disk.
     Propagates complete machine-readable evidence contract via CLI --json flag.
     timeout_s bounds the capture, including any wait for a trigger; on expiry the CLI stops the FPGA
-    and reports a timeout. If the CLI itself hangs, it is killed 20 s later.
+    and reports a timeout. If the CLI itself hangs, it is killed CAPTURE_EXIT_MARGIN_S (90 s) later,
+    which leaves room for its bounded setup, cleanup, PWM0 shutdown and artifact writes.
     pwm0_hz > 0 drives the analyzer's own PWM0 pin (50 % duty) during the capture, for loopback self-tests.
     """
     cli = _find_cli()
@@ -295,14 +302,15 @@ def logic_capture(
         cmd[-1:-1] = ["--pwm0", str(int(pwm0_hz))]
 
     try:
-        # The CLI stops the FPGA itself after cli_timeout; the margin covers its Stop/drain and file writes.
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=cli_timeout + 20)
+        # The CLI stops the FPGA itself after cli_timeout; the margin covers its setup, cleanup and file writes.
+        exit_limit = cli_timeout + CAPTURE_EXIT_MARGIN_S
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=exit_limit)
     except subprocess.TimeoutExpired as ex:
         stderr_tail = _tail_text(ex.stderr)
         return {
             "success": False,
             "error_code": "CLI_TIMEOUT",
-            "message": f"atk-dl16 capture did not exit within {cli_timeout + 20} s, so the CLI was killed. Replug the DL16 if the next call fails.",
+            "message": f"atk-dl16 capture did not exit within {exit_limit} s, so the CLI was killed. Replug the DL16 if the next call fails.",
             "evidence_source": "REAL_HARDWARE",
             "data_integrity": "UNKNOWN",
             "capture_complete_received": False,

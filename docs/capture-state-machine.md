@@ -46,7 +46,7 @@ stateDiagram-v2
 | **`DISCONNECTED`** | No device handle acquired. Device is unreferenced or closed. | Release interface, close libusb device. | `OPEN`, `DISCONNECTED` |
 | **`OPEN`** | Device handle acquired via `libusb_open()`, interface 0 claimed. | Set auto kernel detach, claim interface 0. | `DEVICE_READY`, `DISCONNECTED`, `ERROR` |
 | **`DEVICE_READY`** | Device enumerated, MCU/FPGA versions identified, idle. | Clear internal queues, unlock capture pipeline. | `FLUSH_RX`, `DISCONNECTED` |
-| **`FLUSH_RX`** | Pre-capture sanitization: stopping a capture left armed by a killed process and discarding stale USB buffers. | Send `Stop` (`0x15`), then read 16 KB at a 50 ms timeout until a read comes back empty (max 1000 reads). | `CONFIGURE`, `ERROR` |
+| **`FLUSH_RX`** | Pre-capture sanitization: stopping a capture left armed by a killed process and discarding stale USB buffers. | Send `Stop` (`0x15`), then read 16 KB at a 50 ms timeout until a read comes back empty (max 1000 reads or 2 s). | `CONFIGURE`, `ERROR` |
 | **`CONFIGURE`** | Sending `ParameterSetting` (`0x11`) with sample rate, depth, threshold. | Send framed `0x11` command via Bulk OUT. | `SETTLE`, `ERROR` |
 | **`SETTLE`** | Mandatory hardware DAC threshold voltage stabilization period. | Non-blocking or timer sleep of exactly **30 ms**. | `ARM_TRIGGER`, `ERROR` |
 | **`ARM_TRIGGER`** | Sending `SimpleTrigger` (`0x12`) with channel triggers & instant flag. | Send framed `0x12` command and verify Ack (Order 4, status 3). | `CAPTURING`, `ERROR` |
@@ -75,7 +75,7 @@ The DL16 utilizes high-speed comparator circuits whose threshold voltages are pr
 Before any configuration, `FLUSH_RX` sends `Stop` (`0x15`) and drains the MCU/FPGA FIFO, mirroring upstream's "clear MCU cache" loop:
 ```text
 send(Stop);
-while (reads++ < 1000 && ReadSynchronous(buffer[16 KB], timeout=50ms) > 0) {
+while (reads++ < 1000 && elapsed < 2s && ReadSynchronous(buffer[16 KB], timeout=50ms) > 0) {
     discard(buffer);
 }
 ```

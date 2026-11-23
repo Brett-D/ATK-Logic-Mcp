@@ -66,3 +66,14 @@ def test_plot_writes_png(tmp_path):
     out = tmp_path / "plot.png"
     _run("plot.py", cap, "--channels", "3,0", "--start-us", "1", "--end-us", "9", "-o", out)
     assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+@pytest.mark.parametrize("script", ["bits2csv.py", "view.py", "plot.py"])
+def test_tools_reject_truncated_channel_file(tmp_path, script):
+    if script == "plot.py":
+        pytest.importorskip("matplotlib")
+    cap = _write_capture(tmp_path)
+    (cap / "ch03.bits").write_bytes(b"\x0f")  # 8 samples; meta.json declares 10
+    proc = subprocess.run([sys.executable, str(TOOLS / script), str(cap)], capture_output=True, text=True)
+    assert proc.returncode != 0
+    assert "holds 8 samples, but meta.json declares 10" in proc.stderr

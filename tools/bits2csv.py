@@ -7,19 +7,15 @@ Writes a row at the first sample, one per sample where any channel changes and o
 sample, under a sigrok/PulseView-style header ("Time(s),<ch>,<ch>,...").
 """
 import argparse
-import json
 from pathlib import Path
 
 import numpy as np
 
-
-def load_channel(cap: Path, ch: int, n: int) -> np.ndarray:
-    raw = np.fromfile(cap / f"ch{ch:02d}.bits", dtype=np.uint8)
-    return np.unpackbits(raw, bitorder="little")[:n]
+from capture_files import load_channel, load_meta
 
 
 def convert(cap: Path, out_csv: Path) -> int:
-    meta = json.loads((cap / "meta.json").read_text(encoding="utf-8"))
+    meta = load_meta(cap)
     fs = float(meta["sample_rate"])
     n = int(meta["actual_samples"])
     chans = [int(c) for c in meta["channels"]]

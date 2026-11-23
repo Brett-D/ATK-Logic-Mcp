@@ -34,10 +34,10 @@ Upstream ATK-Logic always ends a capture with Stop (`0x15`) and drains the endpo
 
 - sends Stop and drains when it opens the device, before it reads the MCU version;
 - skips stale non-version packets while reading the MCU version (up to 20 reads, re-sending the query after every 5 empty reads);
-- drains with 16 KB reads at a 50 ms timeout until a read comes back empty (at most 1000 reads), like upstream's "clear MCU cache" loop;
+- drains with 16 KB reads at a 50 ms timeout until a read comes back empty (at most 1000 reads or 2 s), like upstream's "clear MCU cache" loop;
 - sends Stop and drains before each capture and on every exit path (success, error or timeout).
 
-`--timeout <sec>` (default 30) bounds the capture, including the wait for a trigger. Over MCP, `timeout_s` is passed to the CLI as `--timeout`, and the server kills the CLI if it hasn't exited 20 s after that. If calls still hang, unplug and replug the DL16.
+`--timeout <sec>` (default 30) bounds the capture, including the wait for a trigger. Because every drain is capped at 2 s, the CLI's own work outside that window is bounded too: about 35 s at most to open the device and about 7 s of capture setup and cleanup, plus writing the capture files. Over MCP, `timeout_s` is passed to the CLI as `--timeout`, and the server only kills the CLI if it hasn't exited 90 s after that (45 s for `logic_status`). If calls still hang, unplug and replug the DL16.
 
 Set `ATK_DL16_DEBUG=1` to trace every bulk read and parsed message type to stderr during a capture.
 

@@ -26,7 +26,7 @@ def test_capture_passes_timeout_and_pwm0_to_cli(fake_cli):
     assert cmd[cmd.index("--timeout") + 1] == "5"
     assert cmd[cmd.index("--pwm0") + 1] == "100000"
     assert cmd[-1] == "--json"
-    assert run.call_args.kwargs["timeout"] == 25
+    assert run.call_args.kwargs["timeout"] == 5 + srv.CAPTURE_EXIT_MARGIN_S
 
 
 def test_capture_omits_pwm0_by_default(fake_cli):

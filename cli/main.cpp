@@ -196,7 +196,23 @@ int main(int argc, char* argv[]) {
                 pwm_on[1 + b] = static_cast<uint8_t>((period >> (8 * b)) & 0xFF);
                 pwm_on[5 + b] = static_cast<uint8_t>((high >> (8 * b)) & 0xFF);
             }
-            dev.transport().send_command(CommandCode::PWM, pwm_on, sizeof(pwm_on));
+            auto pwm_err = dev.transport().send_command(CommandCode::PWM, pwm_on, sizeof(pwm_on));
+            if (!pwm_err) {
+                uint8_t pwm_off[1] = {0x10};
+                dev.transport().send_command(CommandCode::PWM, pwm_off, sizeof(pwm_off));
+                CaptureResult pwm_res;
+                pwm_res.success = false;
+                pwm_res.error_code = pwm_err.code;
+                pwm_res.error_message = "Failed to start PWM0: " + pwm_err.message;
+                pwm_res.data_integrity = DataIntegrity::Unknown;
+                pwm_res.capture_complete_received = false;
+                if (json_mode) {
+                    std::cout << serialize_capture_result_json(pwm_res, out_dir);
+                } else {
+                    std::cerr << pwm_res.error_message << "\n";
+                }
+                return 1;
+            }
         }
         if (!json_mode) {
             std::cout << "Starting capture: " << (config.sample_rate / 1'000'000.0) << " MHz, "
@@ -216,7 +232,11 @@ int main(int argc, char* argv[]) {
         );
         if (pwm0_hz > 0) {
             uint8_t pwm_off[1] = {0x10};
-            dev.transport().send_command(CommandCode::PWM, pwm_off, sizeof(pwm_off));
+            auto pwm_err = dev.transport().send_command(CommandCode::PWM, pwm_off, sizeof(pwm_off));
+            if (!pwm_err) {
+                result.warnings.push_back("Failed to stop PWM0: " + pwm_err.message);
+                std::cerr << "\nWarning: failed to stop PWM0: " << pwm_err.message << "\n";
+            }
         }
         if (!json_mode) {
             std::cout << "\n";

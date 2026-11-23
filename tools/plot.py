@@ -21,10 +21,7 @@ try:
 except ImportError as ex:
     raise SystemExit(f"plot.py needs matplotlib ({ex}); install it with: pip install matplotlib") from None
 
-
-def load_channel(cap: Path, ch: int, n: int) -> np.ndarray:
-    raw = np.fromfile(cap / f"ch{ch:02d}.bits", dtype=np.uint8)
-    return np.unpackbits(raw, bitorder="little")[:n]
+from capture_files import load_channel, load_meta
 
 
 def steps(bits: np.ndarray, a: int, b: int) -> tuple[np.ndarray, np.ndarray]:
@@ -47,7 +44,7 @@ def main() -> None:
 
     cap = args.capture_dir
     cfg = json.loads(args.config.read_text(encoding="utf-8")) if args.config else {}
-    meta = json.loads((cap / "meta.json").read_text(encoding="utf-8"))
+    meta = load_meta(cap)
     fs = float(meta["sample_rate"])
     n = int(meta["actual_samples"])
     available = [int(c) for c in meta["channels"]]

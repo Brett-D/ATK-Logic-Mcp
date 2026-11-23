@@ -30,7 +30,7 @@ function draw(){
   const px=(W-LW)/span;let lv=level(c,t0),lastx=-1;cx.moveTo(LW,lv?yh:yl);
   for(let k=first(c,t0);k<c.edges.length&&c.edges[k]<=t1;k++){const ex=LW+(c.edges[k]-t0)*px;
    // Edges closer than half a pixel collapse into one vertical stroke.
-   if(ex-lastx<0.5){cx.lineTo(ex,yh);cx.lineTo(ex,yl);lastx=ex;lv=1-lv;continue}
+   if(ex-lastx<0.5){cx.lineTo(ex,yh);cx.lineTo(ex,yl);lv=1-lv;cx.lineTo(ex,lv?yh:yl);lastx=ex;continue}
    cx.lineTo(ex,lv?yh:yl);lv=1-lv;cx.lineTo(ex,lv?yh:yl);lastx=ex}
   cx.lineTo(W,lv?yh:yl);cx.stroke();cx.lineWidth=1});
  if(mx>LW){cx.strokeStyle='#cc4';cx.beginPath();cx.moveTo(mx,AX);cx.lineTo(mx,H);cx.stroke()}
