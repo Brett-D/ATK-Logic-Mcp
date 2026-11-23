@@ -32,22 +32,29 @@ def build_data(cap: Path, cfg: dict) -> dict:
     meta = load_meta(cap)
     n = int(meta["actual_samples"])
     rate = float(meta["sample_rate"])
+    if n == 0:
+        raise SystemExit(f"{cap}: capture has no samples")
+    view = None
+    view_us = cfg.get("view_us")
+    if view_us:
+        view = [max(0, int(view_us[0] * rate / 1e6)), min(n, int(view_us[1] * rate / 1e6))]
+        if view[0] >= view[1]:
+            raise SystemExit(f"view_us {view_us} selects no samples of this capture (0 to {n / rate * 1e6:g} us)")
     labels = {int(k): str(v) for k, v in cfg.get("labels", {}).items()}
     chans = []
     for ch in (int(c) for c in meta["channels"]):
         bits = load_channel(cap, ch, n)
         edges = np.flatnonzero(bits[1:] != bits[:-1]) + 1
-        chans.append({"ch": ch, "label": labels.get(ch, ""), "init": int(bits[0]) if n else 0,
-                      "edges": edges.tolist(), "high": float(bits.mean()) if n else 0.0})
+        chans.append({"ch": ch, "label": labels.get(ch, ""), "init": int(bits[0]),
+                      "edges": edges.tolist(), "high": float(bits.mean())})
     order = cfg.get("order")
     if order:
         rank = {int(c): i for i, c in enumerate(order)}
         chans.sort(key=lambda c: rank.get(c["ch"], len(rank) + c["ch"]))
     data = {"id": str(meta.get("capture_id", cap.name)), "rate": rate, "n": n,
             "thr": meta.get("threshold_voltage"), "chans": chans}
-    view_us = cfg.get("view_us")
-    if view_us:
-        data["view"] = [max(0, int(view_us[0] * rate / 1e6)), min(n, int(view_us[1] * rate / 1e6))]
+    if view:
+        data["view"] = view
     return data
 
 

@@ -132,9 +132,11 @@ Error Device::query_info(DeviceInfo& info) {
         if (actual_len == 0 && attempt % 5 == 4) {
             m_transport->write_bulk(EP_BULK_OUT, mcu_cmd, sizeof(mcu_cmd), 150);
         }
-        got_version = actual_len >= 9 && mcu_resp[0] == 0x0A && mcu_resp[1] == 0x81;
+        // A version reply starts [0x0A, 0x81, 0x01, 0x61] (0x62 when the MCU is in its bootloader); anything else is stale.
+        got_version = actual_len >= 9 && mcu_resp[0] == 0x0A && mcu_resp[1] == 0x81 && mcu_resp[2] == 0x01 &&
+                      (mcu_resp[3] == 0x61 || mcu_resp[3] == 0x62);
     }
-    if (actual_len < 9) {
+    if (!got_version) {
         return {ErrorCode::ProtocolError, "MCU version response timeout or truncated", true, "Retry query"};
     }
 

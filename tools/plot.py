@@ -21,12 +21,11 @@ try:
 except ImportError as ex:
     raise SystemExit(f"plot.py needs matplotlib ({ex}); install it with: pip install matplotlib") from None
 
-from capture_files import load_channel, load_meta
+from capture_files import load_meta, load_window
 
 
-def steps(bits: np.ndarray, a: int, b: int) -> tuple[np.ndarray, np.ndarray]:
-    """Step-plot points for samples [a, b): the window ends plus one point per level change."""
-    seg = bits[a:b]
+def steps(seg: np.ndarray, a: int) -> tuple[np.ndarray, np.ndarray]:
+    """Step-plot points for a window starting at sample a: its ends plus one point per level change."""
     e = np.flatnonzero(seg[1:] != seg[:-1]) + 1
     return np.r_[0, e, len(seg)] + a, np.r_[seg[0], seg[e], seg[-1]]
 
@@ -66,7 +65,7 @@ def main() -> None:
 
     fig, ax = plt.subplots(figsize=(13, max(2.0, 0.8 + 0.45 * len(order))))
     for row, c in enumerate(order):
-        x, y = steps(load_channel(cap, c, n), a, b)
+        x, y = steps(load_window(cap, c, n, a, b), a)
         ax.step(x / fs * 1e6, y * 0.7 + (len(order) - 1 - row), where="post", lw=1.1)
     ax.set_yticks([len(order) - 1 - i + 0.35 for i in range(len(order))])
     ax.set_yticklabels([f"CH{c} {labels.get(c, '')}".strip() for c in order], fontsize=8.5)

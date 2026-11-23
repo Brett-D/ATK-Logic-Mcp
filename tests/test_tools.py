@@ -57,6 +57,14 @@ def test_bits2csv_batches_match_single_pass(tmp_path, monkeypatch):
     assert batched.read_text(encoding="utf-8") == whole.read_text(encoding="utf-8")
 
 
+def test_load_window_handles_bit_offsets(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(TOOLS))
+    capture_files = importlib.import_module("capture_files")
+    cap = _write_capture(tmp_path)
+    assert capture_files.load_window(cap, 0, 10, 3, 9).tolist() == CH0[3:9]
+    assert capture_files.load_window(cap, 3, 10, 7, 10).tolist() == CH3[7:10]
+
+
 def test_view_embeds_edges_labels_and_window(tmp_path):
     cap = _write_capture(tmp_path)
     cfg = tmp_path / "view.json"
@@ -70,6 +78,18 @@ def test_view_embeds_edges_labels_and_window(tmp_path):
         {"ch": 0, "label": "", "init": 0, "edges": [2, 5, 8], "high": 0.5},
     ]
     assert data["view"] == [1, 8]
+
+
+@pytest.mark.parametrize("view_us", [[10, 20], [20, 30], [5, 5]])
+def test_view_rejects_window_without_samples(tmp_path, view_us):
+    cap = _write_capture(tmp_path)
+    cfg = tmp_path / "view.json"
+    cfg.write_text(json.dumps({"view_us": view_us}))
+    proc = subprocess.run([sys.executable, str(TOOLS / "view.py"), str(cap), "--config", str(cfg)],
+                          capture_output=True, text=True)
+    assert proc.returncode != 0
+    assert "selects no samples" in proc.stderr
+    assert not (cap / "viewer.html").exists()
 
 
 def test_plot_writes_png(tmp_path):

@@ -44,7 +44,7 @@ The CSV has a row at the first sample, one at each sample where any channel chan
 python tools\plot.py captures\cap_1795413148654_8430 --channels 1,2,8 --start-us 0 --end-us 25 --config view.json -o dclk.png
 ```
 
-Rows come from `--channels`, else the config's `order`, else every captured channel. `--start-us` and `--end-us` are measured from the start of the capture and override the config's `view_us`; without either, the whole capture is drawn. `--config` takes the same JSON as `view.py`.
+Rows come from `--channels`, else the config's `order`, else every captured channel. `--start-us` and `--end-us` are measured from the start of the capture and override the config's `view_us`; without either, the whole capture is drawn. `--config` takes the same JSON as `view.py`. Only the bytes covering the window are unpacked, so plotting a few microseconds of a long capture stays cheap.
 
 ## mcp_probe.py
 

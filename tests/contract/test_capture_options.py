@@ -1,5 +1,6 @@
 """Contract tests for the MCP server's CLI timeouts and the logic_capture timeout_s / pwm0_hz options."""
 import importlib
+import json
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
@@ -54,3 +55,16 @@ def test_status_reports_info_timeout(fake_cli):
         res = srv.logic_status()
     assert res["ready"] is False
     assert "timed out" in res["message"]
+
+
+def test_cli_rejects_pwm0_above_100mhz():
+    # The range check runs before the device is opened, so this never touches hardware.
+    cli = srv._find_cli()
+    if not cli:
+        pytest.skip("CLI not built yet")
+    proc = subprocess.run([str(cli), "capture", "--json", "--pwm0", "200000000"],
+                          capture_output=True, text=True, timeout=30)
+    assert proc.returncode == 1
+    data = json.loads(proc.stdout)
+    assert data["success"] is False
+    assert data["error_code"] == "INVALID_CAPTURE_CONFIG"

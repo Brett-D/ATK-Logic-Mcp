@@ -93,7 +93,7 @@ static void print_usage() {
               << "  --trigger <ch:edge>           Trigger spec (e.g. ch0:rising, immediate, default: immediate)\n"
               << "  --out <dir>                   Output directory for captures (default: captures)\n"
               << "  --timeout <sec>               Give up (Stop + drain) if not complete in time (default: 30)\n"
-              << "  --pwm0 <hz>                   Drive PWM0 (50 % duty) during this capture only, for loopback self-tests\n"
+              << "  --pwm0 <hz>                   Drive PWM0 (50 % duty, max 100 MHz) during this capture only, for loopback self-tests\n"
               << "  --json                        Output machine-readable JSON to stdout (default: off)\n";
 }
 
@@ -168,6 +168,24 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        auto fail = [&](ErrorCode code, const std::string& message) {
+            CaptureResult res;
+            res.success = false;
+            res.error_code = code;
+            res.error_message = message;
+            res.data_integrity = DataIntegrity::Unknown;
+            res.capture_complete_received = false;
+            if (json_mode) {
+                std::cout << serialize_capture_result_json(res, out_dir);
+            } else {
+                std::cerr << message << "\n";
+            }
+            return 1;
+        };
+        if (pwm0_hz > 100'000'000) {
+            return fail(ErrorCode::InvalidCaptureConfig, "--pwm0 must be at most 100000000 Hz (a two-tick period at 200 MHz)");
+        }
+
         Device dev;
         auto err = dev.open();
         if (!err) {
@@ -200,18 +218,7 @@ int main(int argc, char* argv[]) {
             if (!pwm_err) {
                 uint8_t pwm_off[1] = {0x10};
                 dev.transport().send_command(CommandCode::PWM, pwm_off, sizeof(pwm_off));
-                CaptureResult pwm_res;
-                pwm_res.success = false;
-                pwm_res.error_code = pwm_err.code;
-                pwm_res.error_message = "Failed to start PWM0: " + pwm_err.message;
-                pwm_res.data_integrity = DataIntegrity::Unknown;
-                pwm_res.capture_complete_received = false;
-                if (json_mode) {
-                    std::cout << serialize_capture_result_json(pwm_res, out_dir);
-                } else {
-                    std::cerr << pwm_res.error_message << "\n";
-                }
-                return 1;
+                return fail(pwm_err.code, "Failed to start PWM0: " + pwm_err.message);
             }
         }
         if (!json_mode) {

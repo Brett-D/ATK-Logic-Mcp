@@ -24,6 +24,8 @@ PWM0 runs at 50 % duty for this capture only and is switched off afterwards. Ove
 
 The CLI uses upstream ATK-Logic's encoding from `SessionController::pwmStart`: command `0x17` with payload `[0x11, period, high]`, both `uint32` little-endian in 200 MHz ticks (`period = round(200 MHz / f)`). Payload `[0x10]` stops PWM0. See [protocol.md](protocol.md#45-0x17-pwm).
 
+`--pwm0` accepts up to 100 MHz, a two-tick period; higher values are rejected before the device is opened. The output runs at 200 MHz divided by the rounded period, so pick a frequency that divides 200 MHz evenly, such as 100 kHz, when the loopback frequency matters.
+
 ## Threshold
 
 The comparator threshold byte is `round(|V| × 10)`, clamped to 50 (5.0 V), with bit 7 set for negative voltages. A negative threshold makes every input read HIGH. Because of the quirk above, an immediate capture at a negative threshold never starts and times out.

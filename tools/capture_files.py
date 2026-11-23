@@ -20,6 +20,12 @@ def map_channel(cap: Path, ch: int, n: int) -> np.ndarray:
     return np.memmap(path, dtype=np.uint8, mode="r")
 
 
+def load_window(cap: Path, ch: int, n: int, a: int, b: int) -> np.ndarray:
+    """Samples a..b-1 of one channel, unpacking only the bytes that hold them."""
+    packed = map_channel(cap, ch, n)[a // 8:(b + 7) // 8]
+    return np.unpackbits(packed, bitorder="little")[a % 8:a % 8 + (b - a)]
+
+
 def load_channel(cap: Path, ch: int, n: int) -> np.ndarray:
-    """Samples 0..n-1 of one channel, unpacked to one uint8 per sample."""
-    return np.unpackbits(map_channel(cap, ch, n)[: (n + 7) // 8], bitorder="little")[:n]
+    """All n samples of one channel, unpacked to one uint8 per sample."""
+    return load_window(cap, ch, n, 0, n)
